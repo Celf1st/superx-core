@@ -15,6 +15,7 @@ import (
 	"net"
 	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	sync "sync"
@@ -131,8 +132,22 @@ func Setup(params *SetupRequest, platformInterface libbox.PlatformInterface) err
 	return InitHiddifyService()
 }
 
+// newGrpcListener listens on a Unix Domain Socket if listenAddr is "unix:<path>"
+// (SuperX: GUI↔core over UDS, no exposed TCP loopback port), else TCP.
+func newGrpcListener(listenAddr string) (net.Listener, error) {
+	if strings.HasPrefix(listenAddr, "unix:") {
+		sockPath := strings.TrimPrefix(listenAddr, "unix:")
+		_ = os.Remove(sockPath) // remove stale socket from a previous run
+		if dir := filepath.Dir(sockPath); dir != "" {
+			_ = os.MkdirAll(dir, 0o755)
+		}
+		return net.Listen("unix", sockPath)
+	}
+	return net.Listen("tcp", listenAddr)
+}
+
 func StartGrpcServer(listenAddressG string, service string) (*grpc.Server, error) {
-	lis, err := net.Listen("tcp", listenAddressG)
+	lis, err := newGrpcListener(listenAddressG)
 	if err != nil {
 		log.Error("failed to listen: %v", err)
 		return nil, err
@@ -177,18 +192,20 @@ var (
 
 // StartGrpcServerByMode starts a gRPC server on the specified address with mTLS.
 func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server, error) {
-	// Validate the listen address
-	if !strings.Contains(listenAddressG, ":") {
-		return nil, fmt.Errorf("invalid listen address (no port): %s", listenAddressG)
-	}
-	// Convert the port from string to uint16
-	portStr := strings.Split(listenAddressG, ":")[1]
-	port, err := strconv.ParseUint(portStr, 10, 16)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert port %s to uint16: %v", portStr, err)
-	}
-	if hutils.IsPortInUse(uint16(port)) {
-		return nil, fmt.Errorf("port %s is already in use", portStr)
+	// Validate the listen address (TCP only; Unix socket "unix:<path>" skips port checks)
+	if !strings.HasPrefix(listenAddressG, "unix:") {
+		if !strings.Contains(listenAddressG, ":") {
+			return nil, fmt.Errorf("invalid listen address (no port): %s", listenAddressG)
+		}
+		// Convert the port from string to uint16
+		portStr := strings.Split(listenAddressG, ":")[1]
+		port, err := strconv.ParseUint(portStr, 10, 16)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert port %s to uint16: %v", portStr, err)
+		}
+		if hutils.IsPortInUse(uint16(port)) {
+			return nil, fmt.Errorf("port %s is already in use", portStr)
+		}
 	}
 	// Fetch the server private key and public key from the database
 	if _, exists := grpcServer[mode]; exists {
@@ -244,8 +261,8 @@ func StartGrpcServerByMode(listenAddressG string, mode SetupMode) (*grpc.Server,
 	RegisterCoreServer(grpcServer[mode], &CoreService{})
 	hello.RegisterHelloServer(grpcServer[mode], &hello.HelloService{})
 	ezytel.RegisterEzytelServer(grpcServer[mode], ezytel.NewEzytelService(""))
-	// Listen on the provided address
-	lis, err := net.Listen("tcp", listenAddressG)
+	// Listen on the provided address (TCP or Unix socket via unix: prefix)
+	lis, err := newGrpcListener(listenAddressG)
 	if err != nil {
 		Log(LogLevel_ERROR, LogType_CORE, fmt.Sprintf("failed to listen on %s: %v\n", listenAddressG, err))
 		return nil, err
