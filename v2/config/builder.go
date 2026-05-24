@@ -316,7 +316,7 @@ func setOutbounds(options *option.Options, input *option.Options, opt *HiddifyOp
 		} else {
 			outbounds = append([]option.Outbound{balancer, urlTest}, outbounds...)
 			selectorTags = append([]string{urlTest.Tag, balancer.Tag}, selectorTags...)
-			defaultSelect = balancer.Tag
+			defaultSelect = urlTest.Tag // SuperX: default to url-test (lowest-delay), auto-picks a live node on connect; "balance" started empty until health-check
 
 		}
 	}
