@@ -468,7 +468,10 @@ func setInbound(options *option.Options, hopt *HiddifyOptions) {
 		// default:
 
 		// }
-		opts.Address = []netip.Prefix{netip.MustParsePrefix("172.19.0.1/28")}
+		// SuperX: distinct TUN subnet so we never collide with another sing-box/hiddify
+		// VPN that uses the upstream default 172.19.0.1 (Windows: "set ipv4 address:
+		// The object already exists"). Also avoids common Docker 172.16/12 ranges.
+		opts.Address = []netip.Prefix{netip.MustParsePrefix("10.50.0.1/28")}
 		if ipv6Enable {
 			opts.Address = append(opts.Address, netip.MustParsePrefix("fdfe:dcba:9876::1/126"))
 		}
